@@ -1,0 +1,15 @@
+{
+  "title": "Add a simple rate limiter utility",
+  "description": "Create a lightweight in-memory rate limiter that can be used to protect public API endpoints. It should support a configurable number of requests per time window and return clear allow/deny decisions.",
+  "repo_url": null,
+  "base_branch": "main",
+  "acceptance_criteria": [
+    "A RateLimiter class or function exists",
+    "It accepts max_requests and window_seconds parameters",
+    "It correctly allows requests under the limit and denies when exceeded",
+    "Basic unit tests pass"
+  ],
+  "risk_tolerance": "medium",
+  "language": "python",
+  "max_iterations": 4
+}
