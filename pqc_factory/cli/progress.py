@@ -1,4 +1,4 @@
-"""Live Rich progress + decision-log replay for demos."""
+"""Live Rich progress + decision-log replay - branded."""
 
 from __future__ import annotations
 
@@ -12,14 +12,16 @@ from rich.panel import Panel
 from rich.progress import BarColumn, Progress, SpinnerColumn, TextColumn, TimeElapsedColumn
 from rich.table import Table
 
-console = Console()
+from pqc_factory.cli.brand import OK
+
+console = Console(highlight=False)
 
 
 def live_run_progress(steps: List[str], delay: float = 0.15) -> None:
     progress = Progress(
-        SpinnerColumn(),
-        TextColumn("[bold blue]{task.description}"),
-        BarColumn(),
+        SpinnerColumn(style="cyan"),
+        TextColumn("[bold cyan]◆[/bold cyan] {task.description}"),
+        BarColumn(bar_width=24, style="cyan", complete_style="green"),
         TimeElapsedColumn(),
         console=console,
     )
@@ -32,12 +34,12 @@ def live_run_progress(steps: List[str], delay: float = 0.15) -> None:
 
 
 def render_scoreboard(scores: Dict[str, float], winner: Optional[str] = None) -> Table:
-    table = Table(title="Branch scores")
+    table = Table(title="[cyan]◆[/cyan] Branch scores", border_style="dim")
     table.add_column("Branch")
     table.add_column("Score", justify="right")
-    table.add_column("Winner")
+    table.add_column("")
     for bid, score in sorted(scores.items(), key=lambda x: -x[1]):
-        mark = "*" if bid == winner else ""
+        mark = "[green]★[/green]" if bid == winner else ""
         table.add_row(bid[:40], f"{score:.1f}", mark)
     return table
 
@@ -45,10 +47,16 @@ def render_scoreboard(scores: Dict[str, float], winner: Optional[str] = None) ->
 def replay_decision_log(path: str | Path, delay: float = 0.05) -> None:
     p = Path(path)
     if not p.exists():
-        console.print(f"[red]Log not found: {p}[/red]")
+        console.print(Panel(f"[red]Log not found:[/red] {p}", border_style="red", title="error"))
         return
     lines = p.read_text(encoding="utf-8").strip().splitlines()
-    console.print(Panel(f"Replaying {len(lines)} events from {p}", title="PQC Replay"))
+    console.print(
+        Panel(
+            f"Replaying [bold]{len(lines)}[/bold] events from [dim]{p}[/dim]",
+            border_style="cyan",
+            title="[bold cyan]◆ PQC Replay[/bold cyan]",
+        )
+    )
     for line in lines:
         if not line.strip():
             continue
@@ -58,10 +66,10 @@ def replay_decision_log(path: str | Path, delay: float = 0.05) -> None:
             continue
         event = rec.get("event", "?")
         data = rec.get("data", {})
-        ts = rec.get("ts", "")[:19]
-        console.print(f"[dim]{ts}[/dim] [cyan]{event}[/cyan] {data}")
+        ts = str(rec.get("ts", ""))[:19]
+        console.print(f"  [dim]{ts}[/dim]  [cyan]→[/cyan] [bold]{event}[/bold]  [dim]{data}[/dim]")
         time.sleep(delay)
-    console.print("[green]Replay complete[/green]")
+    console.print(f"  [{OK}]✓[/] [dim]Replay complete[/dim]")
 
 
 def iter_log(path: str | Path) -> Iterator[Dict[str, Any]]:
