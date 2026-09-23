@@ -1,0 +1,8 @@
+# PQC Factory policy pack
+max_risk_score: 50
+min_overall_score: 70
+max_critical_security: 0
+max_high_security: 2
+min_test_pass_rate: 0.8
+block_new_deps: false
+require_pr_ready: true
