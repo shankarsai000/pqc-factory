@@ -20,20 +20,12 @@ from pqc_factory.orchestrator.planner import plan_approaches
 from pqc_factory.orchestrator.scorer import select_winner
 from pqc_factory.sandbox.logger import DecisionLogger
 from pqc_factory.sandbox.manager import SandboxManager
+from pqc_factory.memory.store import MemoryStore, record_from_report
+from pqc_factory.hitl.gates import HITLStore
 
 
 class PQCEngine:
-    """
-    End-to-end Production-Qualified Change Factory.
-
-    Pipeline:
-    1. Plan approaches
-    2. Create base sandbox + fork branches
-    3. Implement <-> Verify loop per branch
-    4. Security + Performance gates
-    5. Score & select winner
-    6. Generate PQC report
-    """
+    """End-to-end Production-Qualified Change Factory."""
 
     def __init__(
         self,
@@ -48,7 +40,6 @@ class PQCEngine:
         self.logger = logger or DecisionLogger()
         self.max_branches = max_branches
         self.max_iterations = max_iterations
-
         self.implementer = ImplementerAgent(self.llm, self.sandbox)
         self.verifier = VerifierAgent(self.llm, self.sandbox)
         self.security = SecurityAgent(self.llm, self.sandbox)
@@ -57,21 +48,16 @@ class PQCEngine:
 
     def run(self, ticket: Ticket) -> PQCReport:
         self.logger.log("run_started", {"title": ticket.title})
-
-        approaches = plan_approaches(ticket, self.max_branches)
+        approaches = plan_approaches(ticket, self.max_branches, memory=MemoryStore())
         self.logger.log("plan_created", {"approaches": approaches})
-
         base_id = self.sandbox.create_base("base")
         self.logger.log("base_sandbox_created", {"sandbox_id": base_id})
-
         all_metrics: List[BranchMetrics] = []
-
         for approach in approaches:
             branch_id = self.sandbox.fork(base_id, approach)
             self.logger.log("branch_forked", {"branch_id": branch_id, "approach": approach})
             metrics = self._run_branch(ticket, branch_id, approach)
             all_metrics.append(metrics)
-
         winner = select_winner(all_metrics)
         if not winner:
             return PQCReport(
@@ -79,25 +65,10 @@ class PQCEngine:
                 ticket_title=ticket.title,
                 summary="No viable branch produced.",
             )
-
-        self.logger.log(
-            "winner_selected",
-            {"branch_id": winner.branch_id, "score": winner.overall_score},
-        )
-
-        test_summary = (
-            f"Pass rate: {winner.test_pass_rate:.0%} "
-            f"({int(winner.test_pass_rate * 10)}/10 simulated)"
-        )
-        security_summary = (
-            f"Security score {winner.security_score:.0f}/100. "
-            f"Critical: {winner.critical_security_issues}, High: {winner.high_security_issues}"
-        )
-        performance_summary = (
-            f"Performance score {winner.performance_score:.0f}/100. "
-            f"Latency: {winner.latency_change_pct or 'neutral'}"
-        )
-
+        self.logger.log("winner_selected", {"branch_id": winner.branch_id, "score": winner.overall_score})
+        test_summary = f"Pass rate: {winner.test_pass_rate:.0%}"
+        security_summary = f"Security score {winner.security_score:.0f}/100"
+        performance_summary = f"Performance score {winner.performance_score:.0f}/100"
         changed_files = self.sandbox.list_files(winner.branch_id)
         doc = self.documentation.run(
             ticket=ticket,
@@ -107,13 +78,11 @@ class PQCEngine:
             changed_files=changed_files,
             overall_score=winner.overall_score,
         )
-
         status = (
             PQCStatus.PRODUCTION_QUALIFIED
             if winner.overall_score >= 70 and winner.critical_security_issues == 0
             else PQCStatus.NEEDS_REVIEW
         )
-
         report = PQCReport(
             status=status,
             ticket_title=ticket.title,
@@ -127,70 +96,65 @@ class PQCEngine:
             security_summary=security_summary,
             performance_summary=performance_summary,
             rollback_plan=doc.rollback_plan,
-            recommended_next_steps=[
-                "Human review of generated code",
-                "Merge if satisfied",
-                "Monitor after deployment",
-            ],
+            recommended_next_steps=["Human review", "Merge if satisfied", "Monitor after deploy"],
             changed_files=changed_files,
             branches_evaluated=len(all_metrics),
             scores={m.branch_id: m.overall_score for m in all_metrics},
             decision_log_path=str(self.logger.path),
             pr_ready=status == PQCStatus.PRODUCTION_QUALIFIED,
         )
-
         self.logger.log("run_finished", {"status": status.value, "score": winner.overall_score})
+        try:
+            mem = MemoryStore()
+            record_from_report(
+                mem,
+                ticket_title=ticket.title,
+                language=getattr(ticket, "language", "python") or "python",
+                report=report,
+                approaches=approaches,
+            )
+            gate = HITLStore().create(
+                ticket_title=ticket.title,
+                risk_score=report.risk_score,
+                overall_score=report.overall_score,
+                risk_threshold=40,
+            )
+            report.summary = (report.summary or "") + f"\n\nHITL run_id={gate.run_id} status={gate.status}"
+        except Exception:
+            pass
         return report
 
     def _run_branch(self, ticket: Ticket, branch_id: str, approach: str) -> BranchMetrics:
-        """Implement <-> Verify loop + security/performance gates for one branch."""
         feedback = ""
         changed_files: list[str] = []
         final_verifier = None
         i = 0
-
         for i in range(self.max_iterations):
             impl = self.implementer.run(
                 task=ticket.summary(),
                 sandbox_id=branch_id,
                 feedback=feedback,
+                language=getattr(ticket, "language", "python") or "python",
             )
             changed_files = impl.changed_files or changed_files
-            self.logger.log(
-                "implementer_step",
-                {"branch": branch_id, "iteration": i + 1, "files": changed_files},
-            )
-
+            self.logger.log("implementer_step", {"branch": branch_id, "iteration": i + 1})
             ver = self.verifier.run(
                 task=ticket.summary(),
                 sandbox_id=branch_id,
                 changed_files=changed_files,
             )
             final_verifier = ver
-            self.logger.log(
-                "verifier_step",
-                {
-                    "branch": branch_id,
-                    "iteration": i + 1,
-                    "overall": ver.overall,
-                    "passed": ver.passed,
-                    "failed": ver.failed,
-                },
-            )
-
+            self.logger.log("verifier_step", {"branch": branch_id, "overall": ver.overall})
             if ver.overall == "PASS":
                 break
             feedback = ver.feedback
-
         sec = self.security.run(branch_id, changed_files)
         perf = self.performance.run(branch_id, changed_files)
-
         pass_rate = 0.0
         if final_verifier and final_verifier.total > 0:
             pass_rate = final_verifier.passed / final_verifier.total
         elif final_verifier and final_verifier.overall == "PASS":
             pass_rate = 1.0
-
         metrics = BranchMetrics(
             branch_id=branch_id,
             approach_name=approach,
