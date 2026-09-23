@@ -48,14 +48,11 @@ def run(
 
 @app.command()
 def status():
-    """Show basic environment status."""
     console.print("PQC Factory CLI is ready.")
-    console.print("Use: pqc run --ticket examples/sample_ticket.json")
 
 
 @app.command()
 def report(path: Path = typer.Argument("pqc_report.md")):
-    """Display a previously generated report."""
     if not path.exists():
         console.print(f"[red]File not found: {path}[/red]")
         raise typer.Exit(1)
@@ -67,10 +64,8 @@ def pr_package(
     ticket: Path = typer.Option(..., "--ticket", "-t"),
     out: Path = typer.Option(Path("./pqc_pr"), "--out", "-o"),
 ):
-    """Run pipeline and emit a PR package."""
     from pqc_factory.pr.package import build_pr_package
     from pqc_factory.orchestrator.graph import run_via_graph
-
     data = json.loads(ticket.read_text(encoding="utf-8"))
     t = Ticket(**data)
     report = run_via_graph(t, max_branches=2, max_iterations=3)
@@ -86,16 +81,56 @@ def pr_package(
 def replay(
     log: Path = typer.Option(Path("/tmp/pqc_logs/decisions.jsonl"), "--log", "-l"),
 ):
-    """Replay a decision log with Rich output."""
     from pqc_factory.cli.progress import replay_decision_log
     replay_decision_log(log)
 
 
 @app.command("graph")
 def show_graph():
-    """Print Mermaid diagram of the PQC LangGraph."""
     from pqc_factory.orchestrator.graph import graph_mermaid
     console.print(graph_mermaid())
+
+
+@app.command("approve")
+def approve(
+    run_id: str = typer.Argument(..., help="HITL run id"),
+    reason: str = typer.Option("approved by human", "--reason", "-r"),
+):
+    from pqc_factory.hitl.gates import HITLStore
+    store = HITLStore()
+    try:
+        g = store.approve(run_id, reason=reason)
+        console.print(Panel(f"[green]APPROVED[/green] {g.run_id}\n{g.reason}", title="HITL"))
+    except KeyError:
+        console.print(f"[red]Unknown run_id: {run_id}[/red]")
+        raise typer.Exit(1)
+
+
+@app.command("reject")
+def reject(
+    run_id: str = typer.Argument(...),
+    reason: str = typer.Option(..., "--reason", "-r"),
+    feedback: str = typer.Option("", "--feedback", "-f"),
+):
+    from pqc_factory.hitl.gates import HITLStore
+    store = HITLStore()
+    try:
+        g = store.reject(run_id, reason=reason, feedback=feedback)
+        console.print(Panel(f"[red]REJECTED[/red] {g.run_id}\n{g.feedback or g.reason}", title="HITL"))
+    except KeyError:
+        console.print(f"[red]Unknown run_id: {run_id}[/red]")
+        raise typer.Exit(1)
+
+
+@app.command("pending")
+def pending():
+    from pqc_factory.hitl.gates import HITLStore
+    items = HITLStore().list_pending()
+    if not items:
+        console.print("[dim]No pending gates[/dim]")
+        return
+    for g in items:
+        console.print(f"[yellow]{g.run_id}[/yellow] risk={g.risk_score} score={g.overall_score:.1f} - {g.ticket_title}")
 
 
 if __name__ == "__main__":
