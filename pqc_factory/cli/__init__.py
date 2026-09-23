@@ -1,1 +1,1 @@
-"""CLI package."""
+# CLI package
