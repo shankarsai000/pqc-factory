@@ -1,0 +1,12 @@
+.git
+.venv
+venv
+__pycache__
+*.pyc
+.pytest_cache
+.pqc_sandboxes
+logs
+.env
+.ruff_cache
+pqc_report.md
+pqc_pr
