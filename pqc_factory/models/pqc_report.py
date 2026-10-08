@@ -38,6 +38,18 @@ class PQCReport(BaseModel):
     decision_log_path: Optional[str] = None
     pr_ready: bool = False
     raw_metrics: Dict[str, Any] = Field(default_factory=dict)
+    baseline_delta: Optional[Dict[str, Any]] = None
+    baseline_verdict: Optional[str] = None
+
+    def _baseline_md(self) -> str:
+        if not self.baseline_delta:
+            return "_No baseline captured._"
+        try:
+            from pqc_factory.eval.baseline import BaselineDelta
+
+            return BaselineDelta.model_validate(self.baseline_delta).to_markdown_section()
+        except Exception:
+            return f"Verdict: `{self.baseline_verdict or 'n/a'}`"
 
     def to_markdown(self) -> str:
         lines = [
@@ -58,25 +70,30 @@ class PQCReport(BaseModel):
         else:
             lines.append("- (none recorded)")
 
-        lines.extend([
-            "",
-            "## 3. Test Results",
-            self.test_summary or "_No test summary._",
-            "",
-            "## 4. Security Analysis",
-            self.security_summary or "_No security summary._",
-            "",
-            "## 5. Performance Impact",
-            self.performance_summary or "_No performance summary._",
-            "",
-            "## 6. Risk Score Justification",
-            f"Risk score of **{self.risk_score}/100**.",
-            "",
-            "## 7. Rollback Plan",
-            self.rollback_plan or "_Revert the pull request / restore previous commit._",
-            "",
-            "## 8. Recommended Next Steps",
-        ])
+        lines.extend(
+            [
+                "",
+                "## 3. Test Results",
+                self.test_summary or "_No test summary._",
+                "",
+                "## 4. Security Analysis",
+                self.security_summary or "_No security summary._",
+                "",
+                "## 5. Performance Impact",
+                self.performance_summary or "_No performance summary._",
+                "",
+                "## 5b. Baseline Delta",
+                self._baseline_md(),
+                "",
+                "## 6. Risk Score Justification",
+                f"Risk score of **{self.risk_score}/100**.",
+                "",
+                "## 7. Rollback Plan",
+                self.rollback_plan or "_Revert the pull request / restore previous commit._",
+                "",
+                "## 8. Recommended Next Steps",
+            ]
+        )
         if self.recommended_next_steps:
             lines.extend(f"- {s}" for s in self.recommended_next_steps)
         else:
